@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
@@ -94,8 +94,23 @@ const botResponse = async (
   }
 };
 
+// Hook for animated gradient background
+const useAnimatedGradient = (gradient: string) => {
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.transition = 'background 1s ease-in-out';
+    root.style.background = gradient;
+    return () => {
+      root.style.transition = '';
+    };
+  }, [gradient]);
+};
+
+
 export default function Home() {
-  const [bgColor, setBgColor] = useState<string>('#ffffff');
+  const [bgColor, setBgColor] = useState<string>('linear-gradient(to right, #ffffff, #ffffff)');
+  useAnimatedGradient(bgColor);
+
   const [nickname] = useState('Nicole');
   const [tone, setTone] = useState<ToneType>('empathetic');
   const [moodLog, setMoodLog] = useState<MoodEntry[]>([]);
@@ -110,6 +125,19 @@ export default function Home() {
   const [showStats, setShowStats] = useState(false);
 
   const currentMessages = messages[currentSessionId] || [];
+
+  const gradientMap: Record<string, string> = {
+    happy: 'linear-gradient(to right, #FFFDE7, #FFF9C4)',
+    relieved: 'linear-gradient(to right, #E8F5E9, #C8E6C9)',
+    neutral: 'linear-gradient(to right, #F5F5F5, #EEEEEE)',
+    sad: 'linear-gradient(to right, #E3F2FD, #BBDEFB)',
+    anxious: 'linear-gradient(to right, #F3E5F5, #E1BEE7)',
+    angry: 'linear-gradient(to right, #FFEBEE, #FFCDD2)',
+    tired: 'linear-gradient(to right, #FAFAFA, #F0F0F0)',
+    stressed: 'linear-gradient(to right, #FFF3E0, #FFE0B2)',
+    lonely: 'linear-gradient(to right, #EDE7F6, #D1C4E9)',
+    depressed: 'linear-gradient(to right, #F0F0F0, #E0E0E0)'
+  };
 
   const cumulativeChartData = sessions.reduce<
     { session: string; score: number; emoji: string }[]
@@ -130,7 +158,7 @@ export default function Home() {
   const weeklyScore = moodLog.reduce((sum, entry) => sum + (moodScoreMap[entry.mood] || 0), 0);
   const weeklyMood = weeklyScore > 0 ? 'Positive 😊' : weeklyScore < 0 ? 'Negative 😞' : 'Neutral 😐';
 
-  const sendMessage = async () => {
+const sendMessage = async () => {
     if (!input.trim()) return;
     const userText = input.trim();
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -138,7 +166,6 @@ export default function Home() {
     setMessages(prev => ({ ...prev, [currentSessionId]: newUserMsgs }));
 
     const detectedMood = detectMood(userText);
-
 
     const moodAudioMap: Record<string, string> = {
       happy: '/happy.mp3',
@@ -150,11 +177,11 @@ export default function Home() {
       const audio = new Audio(moodSound);
       audio.play();
     }
-    setBgColor(moodColorMap[detectedMood] || '#ffffff');
+
+    setBgColor(gradientMap[detectedMood] || 'linear-gradient(to right, #ffffff, #ffffff)');
 
     const currentSessionName = sessions.find(s => s.id === currentSessionId)?.name || 'Unknown';
     const today = new Date().toISOString().split('T')[0];
-
     setMoodLog(prev => [...prev, { date: today, mood: detectedMood, session: currentSessionName }]);
 
     const history = newUserMsgs.map(m => ({ role: m.sender, content: m.text })) as { role: 'user' | 'assistant'; content: string }[];
@@ -171,10 +198,11 @@ export default function Home() {
     setSessions(prev => [...prev, newSession]);
     setMessages(prev => ({ ...prev, [id]: [{ sender: 'bot', text: `How are you, ${nickname}?`, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }] }));
     setCurrentSessionId(id);
-    setBgColor('#ffffff');
+    setBgColor('linear-gradient(to right, #ffffff, #ffffff)');
   };
+
   return (
-        <div className="min-h-screen flex text-primary transition-colors duration-700" style={{ backgroundColor: bgColor }}>
+    <div className="min-h-screen flex text-primary transition-colors duration-1000" style={{ background: bgColor }}>
       <aside className="w-64 bg-[#D8CCF1] text-white p-6 space-y-4">
         <div className="flex items-center gap-3 mb-6">
           <Image src="/logo.png" alt="RantMe Logo" width={36} height={36} className="rounded-md" />
