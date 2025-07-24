@@ -14,13 +14,16 @@ import {
 import type { LabelProps } from 'recharts';
 
 // Types
-type Message = { sender: 'bot' | 'user'; text: string };
+type Message = {
+  sender: 'bot' | 'user';
+  text: string;
+  timestamp?: string;
+};
 type ChatSessions = { [sessionId: string]: Message[] };
 type Session = { id: string; name: string };
 type ToneType = 'empathetic' | 'motivational' | 'reflective' | 'funny';
 type MoodEntry = { date: string; mood: string; session: string };
 
-// Offline mood scoring & emoji maps for chart
 const moodScoreMap: Record<string, number> = {
   happy: 2,
   relieved: 1,
@@ -30,7 +33,8 @@ const moodScoreMap: Record<string, number> = {
   angry: -2,
   tired: -1,
   stressed: -1,
-  lonely: -1
+  lonely: -1,
+  depressed: -2
 };
 const moodEmojiMap: Record<string, string> = {
   happy: '😊',
@@ -41,10 +45,22 @@ const moodEmojiMap: Record<string, string> = {
   angry: '😠',
   tired: '😴',
   stressed: '😫',
-  lonely: '😞'
+  lonely: '😞',
+  depressed: '💧'
+};
+const moodColorMap: Record<string, string> = {
+  happy: '#FFFEF0',
+  relieved: '#F4FBF8',
+  neutral: '#FAFAFA',
+  sad: '#E3F3F9',
+  anxious: '#F1F2FD',
+  angry: '#FDE8E8',
+  tired: '#F7F7FA',
+  stressed: '#FFF5FA',
+  lonely: '#F6F1FB',
+  depressed: '#EEEEEE'
 };
 
-// Fallback keyword-based mood detector
 const detectMood = (input: string): string => {
   const lower = input.toLowerCase();
   if (/(happy|glad|joy|grateful|cheerful|excited)/.test(lower)) return 'happy';
@@ -55,7 +71,6 @@ const detectMood = (input: string): string => {
   return 'neutral';
 };
 
-// Custom label to render emoji on chart points
 const CustomEmojiLabel = ({ x, y, value }: LabelProps) => {
   const xPos = typeof x === 'number' ? x : 0;
   const yPos = typeof y === 'number' ? y : 0;
@@ -80,23 +95,22 @@ const botResponse = async (
 };
 
 export default function Home() {
+  const [bgColor, setBgColor] = useState<string>('#ffffff');
   const [nickname] = useState('Nicole');
-  const [tone] = useState<ToneType>('empathetic');
+  const [tone, setTone] = useState<ToneType>('empathetic');
   const [moodLog, setMoodLog] = useState<MoodEntry[]>([]);
   const [sessions, setSessions] = useState<Session[]>([
     { id: 'default', name: 'Day 1' }
   ]);
   const [messages, setMessages] = useState<ChatSessions>({
-    default: [{ sender: 'bot', text: `How are you, ${nickname}?` }]
+    default: [{ sender: 'bot', text: `How are you, ${nickname}?`, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]
   });
   const [currentSessionId, setCurrentSessionId] = useState('default');
   const [input, setInput] = useState('');
   const [showStats, setShowStats] = useState(false);
-  const [chatEnded, setChatEnded] = useState(false);
 
   const currentMessages = messages[currentSessionId] || [];
 
-  // Prepare data for cumulative mood chart
   const cumulativeChartData = sessions.reduce<
     { session: string; score: number; emoji: string }[]
   >((acc, session, idx) => {
@@ -113,85 +127,62 @@ export default function Home() {
     return acc;
   }, []);
 
-  // Async sendMessage that logs user, calls GPT, logs bot
+  const weeklyScore = moodLog.reduce((sum, entry) => sum + (moodScoreMap[entry.mood] || 0), 0);
+  const weeklyMood = weeklyScore > 0 ? 'Positive 😊' : weeklyScore < 0 ? 'Negative 😞' : 'Neutral 😐';
+
   const sendMessage = async () => {
-  if (!input.trim()) return;
-  const userText = input.trim();
+    if (!input.trim()) return;
+    const userText = input.trim();
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const newUserMsgs: Message[] = [...currentMessages, { sender: 'user', text: userText, timestamp }];
+    setMessages(prev => ({ ...prev, [currentSessionId]: newUserMsgs }));
 
-  // 2a) append user locally
-  const newUserMsgs: Message[] = [
-    ...currentMessages,
-    { sender: 'user', text: userText }
-  ];
-  setMessages(prev => ({
-    ...prev,
-    [currentSessionId]: newUserMsgs
-  }));
+    const detectedMood = detectMood(userText);
 
-  // 2b) detect mood & log...
-  // (unchanged)
 
-  // 2c) build history for the model
-  const history = newUserMsgs.map(m => ({
-    role: m.sender,
-    content: m.text
-  })) as { role: 'user' | 'assistant'; content: string }[];
+    const moodAudioMap: Record<string, string> = {
+      happy: '/happy.mp3',
+      sad: '/sad.mp3',
+      angry: '/angry.mp3'
+    };
+    const moodSound = moodAudioMap[detectedMood];
+    if (moodSound) {
+      const audio = new Audio(moodSound);
+      audio.play();
+    }
+    setBgColor(moodColorMap[detectedMood] || '#ffffff');
 
-  // 2d) call the API with full history
-  const replyText = await botResponse(history);
+    const currentSessionName = sessions.find(s => s.id === currentSessionId)?.name || 'Unknown';
+    const today = new Date().toISOString().split('T')[0];
 
-  // 2e) append bot reply
-  const updatedMsgs: Message[] = [
-    ...newUserMsgs,
-    { sender: 'bot', text: replyText }
-  ];
-  setMessages(prev => ({
-    ...prev,
-    [currentSessionId]: updatedMsgs
-  }));
+    setMoodLog(prev => [...prev, { date: today, mood: detectedMood, session: currentSessionName }]);
 
-  setInput('');
-};
+    const history = newUserMsgs.map(m => ({ role: m.sender, content: m.text })) as { role: 'user' | 'assistant'; content: string }[];
+    const replyText = await botResponse(history);
+    const updatedMsgs: Message[] = [...newUserMsgs, { sender: 'bot', text: replyText, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }];
+    setMessages(prev => ({ ...prev, [currentSessionId]: updatedMsgs }));
+    setInput('');
+  };
 
-  // Session management helpers
   const createNewSession = () => {
     const id = uuidv4();
     const name = `Day ${sessions.length + 1}`;
-    setSessions(prev => [...prev, { id, name }]);
-    setMessages(prev => ({
-      ...prev,
-      [id]: [{ sender: 'bot', text: `How are you, ${nickname}?` }]
-    }));
+    const newSession: Session = { id, name };
+    setSessions(prev => [...prev, newSession]);
+    setMessages(prev => ({ ...prev, [id]: [{ sender: 'bot', text: `How are you, ${nickname}?`, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }] }));
     setCurrentSessionId(id);
-    setChatEnded(false);
+    setBgColor('#ffffff');
   };
-  const renameSession = (id: string, name: string) => {
-    setSessions(prev => prev.map(s => (s.id === id ? { ...s, name } : s)));
-  };
-  const deleteSession = (id: string) => {
-    setSessions(prev => prev.filter(s => s.id !== id));
-    setMessages(prev => {
-      const { [id]: _, ...rest } = prev;
-      return rest;
-    });
-    setCurrentSessionId(sessions.filter(s => s.id !== id)[0]?.id || '');
-  };
-
   return (
-    <div className="min-h-screen flex bg-background text-primary">
-      {/* Sidebar */}
+        <div className="min-h-screen flex text-primary transition-colors duration-700" style={{ backgroundColor: bgColor }}>
       <aside className="w-64 bg-[#D8CCF1] text-white p-6 space-y-4">
         <div className="flex items-center gap-3 mb-6">
           <Image src="/logo.png" alt="RantMe Logo" width={36} height={36} className="rounded-md" />
           <h1 className="text-2xl font-bold text-[#9C83D3]">RantMe</h1>
         </div>
 
-        <button onClick={createNewSession} className="bg-white text-[#9C83D3] rounded-lg px-3 py-2 shadow">
-          + New Rant
-        </button>
-        <button onClick={() => setShowStats(!showStats)} className="bg-white text-[#9C83D3] rounded-lg px-3 py-2 shadow">
-          📊 View Stats
-        </button>
+        <button onClick={createNewSession} className="bg-white text-[#9C83D3] rounded-lg px-3 py-2 shadow">+ New Rant</button>
+        <button onClick={() => setShowStats(!showStats)} className="bg-white text-[#9C83D3] rounded-lg px-3 py-2 shadow">📊 View Stats</button>
 
         <h2 className="text-sm font-semibold text-white/80">Chat History</h2>
         <ul className="space-y-2 text-sm">
@@ -199,98 +190,57 @@ export default function Home() {
             <li key={session.id} className="relative group">
               <button
                 onClick={() => setCurrentSessionId(session.id)}
-                className={`w-full text-left px-3 py-2 rounded-lg ${
-                  session.id === currentSessionId ? 'bg-white text-[#9C83D3]' : 'hover:bg-white/20'
-                }`}
+                className={`w-full text-left px-3 py-2 rounded-lg ${session.id === currentSessionId ? 'bg-white text-[#9C83D3]' : 'hover:bg-white/20'}`}
               >
                 {session.name}
               </button>
-              <div className="absolute right-1 top-1 opacity-0 group-hover:opacity-100 flex gap-1">
-                <button
-                  onClick={() => {
-                    const newName = prompt('Rename chat:', session.name);
-                    if (newName) renameSession(session.id, newName);
-                  }}
-                  className="text-xs bg-white/30 px-1 rounded"
-                >
-                  ✏️
-                </button>
-                <button
-                  onClick={() => confirm('Delete this chat?') && deleteSession(session.id)}
-                  className="text-xs bg-white/30 px-1 rounded"
-                >
-                  🗑️
-                </button>
-              </div>
             </li>
           ))}
         </ul>
       </aside>
 
-      {/* Main chat & stats */}
       <main className="flex-1 flex flex-col">
-        {/* Header */}
         <div className="p-4 flex items-center gap-3 border-b">
-          <label htmlFor="tone" className="text-sm font-medium text-gray-600">
-            Bot Tone:
-          </label>
+          <label htmlFor="tone" className="text-sm font-medium text-gray-600">Bot Tone:</label>
           <select
             id="tone"
             value={tone}
-            disabled
+            onChange={e => setTone(e.target.value as ToneType)}
             className="rounded border px-2 py-1 text-sm"
           >
             <option value="empathetic">Empathetic</option>
+            <option value="motivational">Motivational</option>
+            <option value="reflective">Reflective</option>
+            <option value="funny">Light-hearted</option>
           </select>
         </div>
 
-        {/* Messages */}
         <div className="flex-1 p-6 overflow-y-auto space-y-4">
           {currentMessages.map((msg, i) => (
-            <div
-              key={i}
-              className={`flex ${msg.sender === 'bot' ? 'justify-start' : 'justify-end'}`}
-            >
-              <div
-                className={`max-w-sm px-4 py-2 rounded-lg shadow ${
-                  msg.sender === 'bot' ? 'bg-white text-gray-800' : 'bg-[#9C83D3] text-white'
-                }`}
-              >
-                {msg.text}
+            <div key={i} className={`flex ${msg.sender === 'bot' ? 'justify-start' : 'justify-end'}`}>
+              <div className={`max-w-sm px-4 py-2 rounded-lg shadow ${msg.sender === 'bot' ? 'bg-white text-gray-800' : 'bg-[#9C83D3] text-white'}`}>
+                <div>{msg.text}</div>
+                <div className="text-xs text-gray-500 mt-1 text-right">{msg.timestamp}</div>
               </div>
             </div>
           ))}
         </div>
 
-        {/* Input area */}
-        {chatEnded ? (
-          <div className="border-t bg-white p-6 text-center">
-            <p className="text-[#9C83D3] font-semibold">Chat ended</p>
-            <button onClick={createNewSession} className="mt-3 bg-[#9C83D3] text-white px-4 py-2 rounded-xl">
-              Start New Rant
-            </button>
-          </div>
-        ) : (
-          <div className="border-t bg-white p-4 flex gap-2">
-            <textarea
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e =>
-                e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), sendMessage())
-              }
-              placeholder="your rant here..."
-              className="flex-1 rounded-xl border p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#9C83D3]"
-            />
-            <button onClick={sendMessage} className="bg-[#9C83D3] text-white px-5 py-2 rounded-xl">
-              Send
-            </button>
-          </div>
-        )}
+        <div className="border-t bg-white p-4 flex gap-2">
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), sendMessage())}
+            placeholder="your rant here..."
+            className="flex-1 rounded-xl border p-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#9C83D3]"
+          />
+          <button onClick={sendMessage} className="bg-[#9C83D3] text-white px-5 py-2 rounded-xl">Send</button>
+        </div>
 
-        {/* Stats */}
         {showStats && (
           <div className="border-t bg-white p-4">
             <h3 className="text-lg font-semibold mb-2 text-[#9C83D3]">📊 Mood Stats by Session</h3>
+            <p className="text-sm text-gray-700 mb-4">Overall Mood This Week: <span className="font-bold">{weeklyMood}</span></p>
             {moodLog.length === 0 ? (
               <p className="text-sm text-gray-500">No data recorded yet.</p>
             ) : (
