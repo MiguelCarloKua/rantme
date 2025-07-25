@@ -83,10 +83,11 @@ const CustomEmojiLabel = ({ x, y, value }: LabelProps) => {
 };
 
 const botResponse = async (
-  history: { role: 'user' | 'assistant'; content: string }[]
+  history: { role: 'user' | 'assistant'; content: string }[],
+  tone: ToneType
 ): Promise<string> => {
   try {
-    const res = await axios.post('/api/chat', { messages: history });
+    const res = await axios.post('/api/chat', { messages: history, tone });
     return res.data.reply as string;
   } catch (err) {
     console.error('API error:', err);
@@ -118,7 +119,7 @@ export default function Home() {
     { id: 'default', name: 'Day 1' }
   ]);
   const [messages, setMessages] = useState<ChatSessions>({
-    default: [{ sender: 'bot', text: `How are you, ${nickname}?`, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]
+    default: [{ sender: 'bot', text: `Greetings! How can I help you today?`, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]
   });
   const [currentSessionId, setCurrentSessionId] = useState('default');
   const [input, setInput] = useState('');
@@ -185,7 +186,7 @@ const sendMessage = async () => {
     setMoodLog(prev => [...prev, { date: today, mood: detectedMood, session: currentSessionName }]);
 
     const history = newUserMsgs.map(m => ({ role: m.sender, content: m.text })) as { role: 'user' | 'assistant'; content: string }[];
-    const replyText = await botResponse(history);
+    const replyText = await botResponse(history, tone);
     const updatedMsgs: Message[] = [...newUserMsgs, { sender: 'bot', text: replyText, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }];
     setMessages(prev => ({ ...prev, [currentSessionId]: updatedMsgs }));
     setInput('');
@@ -196,7 +197,7 @@ const sendMessage = async () => {
     const name = `Day ${sessions.length + 1}`;
     const newSession: Session = { id, name };
     setSessions(prev => [...prev, newSession]);
-    setMessages(prev => ({ ...prev, [id]: [{ sender: 'bot', text: `How are you, ${nickname}?`, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }] }));
+    setMessages(prev => ({ ...prev, [id]: [{ sender: 'bot', text: `Greetings! How can I help you today?`, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }] }));
     setCurrentSessionId(id);
     setBgColor('linear-gradient(to right, #ffffff, #ffffff)');
   };
