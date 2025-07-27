@@ -109,8 +109,7 @@ function normalizeEmotion(hfLabel: string): keyof typeof inverseTheme {
 
 /* ─── Custom chart label ────────────────────────────────── */
 const CustomEmojiLabel = ({ x, y, value }: LabelProps) => {
-  if (typeof x !== 'number' || typeof y !== 'number' || typeof value !== 'string')
-    return null;
+  if (typeof x !== 'number' || typeof y !== 'number' || typeof value !== 'string') return null;
   return (
     <text x={x} y={y - 8} textAnchor="middle" fontSize="16" fill="#9C83D3">
       {value}
@@ -145,10 +144,19 @@ export default function Home() {
   const [bg, setBg] = useState(inverseTheme.neutral.bg);
   const [textColor, setTextColor] = useState(inverseTheme.neutral.text);
   const [tint, setTint] = useState(inverseTheme.neutral.tint);
+  const [sessionThemes, setSessionThemes] = useState<Record<string, {bg:string;text:string;tint:string}>>({
+    default: inverseTheme.neutral
+  });
+
+  /* ─── NEW: per‑session tone state ───────────────────────── */
+  const [tone, setTone] = useState<ToneType>('empathetic');
+  const [sessionTones, setSessionTones] = useState<Record<string, ToneType>>({
+    default: 'empathetic'
+  });
+
   useAnimatedGradient(bg);
 
   /* Chat state */
-  const [tone, setTone] = useState<ToneType>('empathetic');
   const [moodLog, setMoodLog] = useState<MoodEntry[]>([]);
   const [sessions, setSessions] = useState<Session[]>([{ id: 'default', name: 'Day 1' }]);
   const [messages, setMessages] = useState<ChatSessions>({
@@ -161,6 +169,17 @@ export default function Home() {
   const [currentSessionId, setCurrentSessionId] = useState('default');
   const [input, setInput] = useState('');
   const [showStats, setShowStats] = useState(false);
+
+  /* When switching sessions, restore its theme & tone */
+  useEffect(() => {
+    const theme = sessionThemes[currentSessionId] || inverseTheme.neutral;
+    setBg(theme.bg);
+    setTextColor(theme.text);
+    setTint(theme.tint);
+
+    const savedTone = sessionTones[currentSessionId] || 'empathetic';
+    setTone(savedTone);
+  }, [currentSessionId, sessionThemes, sessionTones]);
 
   const currentMessages = messages[currentSessionId] || [];
 
@@ -203,7 +222,7 @@ export default function Home() {
     /* 2) Append user message, including mood */
     const newUserMsgs: Message[] = [
       ...currentMessages,
-      { sender: 'user', text: userText, timestamp, mood: norm }    // NEW – mood stored
+      { sender: 'user', text: userText, timestamp, mood: norm }
     ];
     setMessages(prev => ({ ...prev, [currentSessionId]: newUserMsgs }));
 
@@ -212,6 +231,12 @@ export default function Home() {
     setBg(theme.bg);
     setTextColor(theme.text);
     setTint(theme.tint);
+
+    /* 3b) Remember this session’s theme */
+    setSessionThemes(prev => ({
+      ...prev,
+      [currentSessionId]: theme
+    }));
 
     /* 4) Log mood */
     const today = new Date().toISOString().split('T')[0];
@@ -249,16 +274,16 @@ export default function Home() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }]
     }));
+    /* initialize new session’s theme & tone to neutral/empathetic */
+    setSessionThemes(prev => ({ ...prev, [id]: inverseTheme.neutral }));
+    setSessionTones(prev => ({ ...prev, [id]: 'empathetic' }));
     setCurrentSessionId(id);
-    setBg(inverseTheme.neutral.bg);
-    setTextColor(inverseTheme.neutral.text);
-    setTint(inverseTheme.neutral.tint);
   };
 
   /* ─── JSX ─────────────────────────────────────────────── */
   return (
-  <div style={{ background: bg, color: textColor }} className="min-h-screen flex transition-colors duration-1000">
-    {/* Sidebar */}
+    <div style={{ background: bg, color: textColor }} className="min-h-screen flex transition-colors duration-1000">
+      {/* Sidebar */}
       <aside
         className="w-64 p-6 space-y-4 border-r-4 border-white"
         style={{
@@ -277,7 +302,6 @@ export default function Home() {
             RantMe
           </h1>
         </div>
-
         <button
           onClick={createNewSession}
           className="bg-white px-3 py-2 rounded-lg shadow"
@@ -287,7 +311,6 @@ export default function Home() {
         >
           + New Rant
         </button>
-
         <button
           onClick={() => setShowStats(s => !s)}
           className="bg-white px-3 py-2 rounded-lg shadow"
@@ -297,16 +320,7 @@ export default function Home() {
         >
           📊 View Stats
         </button>
-
-        <h2
-          className="text-lg font-bold"
-          style={{
-            color: '#ffffff', // always white for Chat History
-          }}
-        >
-          Chat History
-        </h2>
-
+        <h2 className="text-lg font-bold text-white/80">Chat History</h2>
         <ul className="space-y-2 text-sm">
           {sessions.map(sess => (
             <li key={sess.id}>
@@ -330,9 +344,9 @@ export default function Home() {
         </ul>
       </aside>
 
-    {/* Main */}
+      {/* Main */}
       <main className="flex-1 flex flex-col">
-        {/* Tone selector — styled by mood */}
+        {/* Tone selector */}
         <div
           className="p-4 flex items-center gap-3 border-b-4"
           style={{
@@ -350,108 +364,110 @@ export default function Home() {
           >
             Bot Tone:
           </label>
-
           <select
             id="tone"
             value={tone}
-            onChange={e => setTone(e.target.value as ToneType)}
+            onChange={e => {
+              const t = e.target.value as ToneType;
+              setTone(t);
+              setSessionTones(prev => ({ ...prev, [currentSessionId]: t }));
+            }}
             className="rounded border px-2 py-1 text-sm"
             style={{
-              backgroundColor: textColor !== inverseTheme.neutral.text ? '#f9f9f9' : '#ffffff',
-              color: textColor !== inverseTheme.neutral.text ? '#111' : 'inherit',
-              border: `2px solid ${textColor !== inverseTheme.neutral.text ? '#ffffff' : '#000000'}`,
+              backgroundColor: '#ffffff',
+              color: '#000000',
+              border: `2px solid ${textColor}`,
             }}
           >
             <option value="empathetic">Empathetic</option>
             <option value="motivational">Motivational</option>
             <option value="reflective">Reflective</option>
-            <option value="funny">Light-hearted</option>
+            <option value="funny">Light‑hearted</option>
           </select>
         </div>
 
-      {/* Messages */}
-      <div className="flex-1 p-6 overflow-y-auto space-y-4">
-        {currentMessages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.sender === 'bot' ? 'justify-start' : 'justify-end'}`}>
-            <div className={`max-w-sm px-4 py-2 rounded-lg shadow ${
-              msg.sender === 'bot'
-                ? 'bg-white text-gray-800'
-                : msg.mood && msg.mood !== 'neutral'
-                  ? 'bg-white text-black'
-                  : 'bg-[#9C83D3] text-white'
-            }`}>
-              <div>{msg.text}</div>
-              <div className="text-xs text-gray-500 mt-1 text-right">{msg.timestamp}</div>
+        {/* Messages */}
+        <div className="flex-1 p-6 overflow-y-auto space-y-4">
+          {currentMessages.map((msg, i) => (
+            <div key={i} className={`flex ${msg.sender === 'bot' ? 'justify-start' : 'justify-end'}`}>
+              <div className={`max-w-sm px-4 py-2 rounded-lg shadow ${
+                msg.sender === 'bot'
+                  ? 'bg-white text-gray-800'
+                  : msg.mood && msg.mood !== 'neutral'
+                    ? 'bg-white text-black'
+                    : 'bg-[#9C83D3] text-white'
+              }`}>
+                <div>{msg.text}</div>
+                <div className="text-xs text-gray-500 mt-1 text-right">{msg.timestamp}</div>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
 
-      {/* Input — now fully styled by mood */}
-      <div
-        className="border-t-4 border-white p-4 flex gap-2"
-        style={{
-          backgroundColor: textColor !== inverseTheme.neutral.text ? tint : '#ffffff',
-        }}
-      >
-        <textarea
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), sendMessage())}
-          placeholder="your rant here..."
-          className="flex-1 rounded-xl p-2 text-sm focus:outline-none"
+        {/* Input */}
+        <div
+          className="border-t-4 border-white p-4 flex gap-2"
           style={{
-            backgroundColor: textColor !== inverseTheme.neutral.text ? '#f9f9f9' : '#ffffff',
-            color: textColor !== inverseTheme.neutral.text ? '#111' : 'inherit',
-            border: `2px solid ${textColor !== inverseTheme.neutral.text ? '#ffffff' : '#000000'}`,
-          }}
-        />
-        <button
-          onClick={sendMessage}
-          className="px-5 py-2 rounded-xl transition-colors duration-300 text-white"
-          style={{
-            backgroundColor: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3',
-            border: `2px solid ${textColor !== inverseTheme.neutral.text ? '#ffffff' : '#000000'}`
+            backgroundColor: textColor !== inverseTheme.neutral.text ? tint : '#ffffff',
           }}
         >
-          Send
-        </button>
-      </div>
-
-      {/* Stats */}
-      {showStats && (
-        <div className="border-t bg-white p-4">
-          <h3
-            className="text-lg font-semibold mb-2"
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), sendMessage())}
+            placeholder="your rant here..."
+            className="flex-1 rounded-xl p-2 text-sm focus:outline-none"
             style={{
-              color: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3',
+              backgroundColor: '#ffffff',
+              color: '#000000',
+              border: `2px solid ${textColor}`,
+            }}
+          />
+          <button
+            onClick={sendMessage}
+            className="px-5 py-2 rounded-xl transition-colors duration-300 text-white"
+            style={{
+              backgroundColor: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3',
+              border: `2px solid ${textColor}`,
             }}
           >
-            📊 Mood Stats by Session
-          </h3>
-
-          <p className="text-sm text-gray-700 mb-4">
-            Overall Mood This Week: <span className="font-bold">{weeklyMood}</span>
-          </p>
-          <ResponsiveContainer width="100%" height={320}>
-            <LineChart data={cumulativeChartData}>
-              <XAxis dataKey="session" padding={{ left: 20, right: 20 }} />
-              <YAxis domain={[-8, 12]} />
-              <Tooltip formatter={(v: number) => [`${v} pts`, 'Mood Score']} />
-              <Line type="monotone" dataKey="score" stroke="#9C83D3" strokeWidth={2} />
-              <Line
-                type="monotone"
-                dataKey="emoji"
-                stroke="#ffde59"
-                strokeWidth={0}
-                dot={{ r: 8, stroke: '#FF8CD1', strokeWidth: 2, fill: '#fff' }}
-                label={<CustomEmojiLabel />}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+            Send
+          </button>
         </div>
-      )}
-    </main>
-  </div>
-);
+
+        {/* Stats */}
+        {showStats && (
+          <div className="border-t bg-white p-4">
+            <h3
+              className="text-lg font-semibold mb-2"
+              style={{
+                color: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3',
+              }}
+            >
+              📊 Mood Stats by Session
+            </h3>
+            <p className="text-sm text-gray-700 mb-4">
+              Overall Mood This Week: <span className="font-bold">{weeklyMood}</span>
+            </p>
+            <ResponsiveContainer width="100%" height={320}>
+              <LineChart data={cumulativeChartData}>
+                <XAxis dataKey="session" padding={{ left: 20, right: 20 }} />
+                <YAxis domain={[-8, 12]} />
+                <Tooltip formatter={(v: number) => [`${v} pts`, 'Mood Score']} />
+                <Line type="monotone" dataKey="score" stroke="#9C83D3" strokeWidth={2} />
+                <Line
+                  type="monotone"
+                  dataKey="emoji"
+                  stroke="#ffde59"
+                  strokeWidth={0}
+                  dot={{ r: 8, stroke: '#FF8CD1', strokeWidth: 2, fill: '#fff' }}
+                  label={<CustomEmojiLabel />}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </main>
+    </div>
+  );
 }
