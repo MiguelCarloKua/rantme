@@ -80,19 +80,33 @@ const inverseTheme: Record<string, { bg: string; text: string; tint: string }> =
   },
 };
 
-/* ─── Offline maps for chart only ───────────────────────── */
+/* ─── Maps for chart only ───────────────────────────────── */
 const moodScoreMap: Record<string, number> = {
-  happy: 2, relieved: 1, neutral: 0, sad: -2,
-  anxious: -1, angry: -2, tired: -1,
-  stressed: -1, lonely: -1, depressed: -2
+  happy: 2,
+  relieved: 1,
+  neutral: 0,
+  sad: -2,
+  anxious: -1,
+  angry: -2,
+  tired: -1,
+  stressed: -1,
+  lonely: -1,
+  depressed: -2
 };
 const moodEmojiMap: Record<string, string> = {
-  happy: '😊', relieved: '😌', neutral: '😐', sad: '😢',
-  anxious: '😰', angry: '😠', tired: '😴',
-  stressed: '😫', lonely: '😞', depressed: '💧'
+  happy: '😊',
+  relieved: '😌',
+  neutral: '😐',
+  sad: '😢',
+  anxious: '😰',
+  angry: '😠',
+  tired: '😴',
+  stressed: '😫',
+  lonely: '😞',
+  depressed: '💧'
 };
 
-/* ─── Map HuggingFace labels → our theme keys ───────────── */
+/* ─── Map HF→our keys ───────────────────────────────────── */
 function normalizeEmotion(hfLabel: string): keyof typeof inverseTheme {
   const l = hfLabel.toLowerCase();
   switch (l) {
@@ -170,7 +184,7 @@ export default function Home() {
   const [input, setInput] = useState('');
   const [showStats, setShowStats] = useState(false);
 
-  /* When switching sessions, restore its theme & tone */
+  /* When switching sessions, restore theme & tone */
   useEffect(() => {
     const theme = sessionThemes[currentSessionId] || inverseTheme.neutral;
     setBg(theme.bg);
@@ -183,16 +197,24 @@ export default function Home() {
 
   const currentMessages = messages[currentSessionId] || [];
 
-  /* Chart data */
+  /* ─── Chart data: average mood per session ─────────────── */
   const cumulativeChartData = sessions.map(sess => {
+    // gather all mood entries for this session
     const entries = moodLog.filter(m => m.session === sess.name);
-    const score = entries.reduce((s, e) => s + (moodScoreMap[e.mood] || 0), 0);
-    const dominant = entries.length
-      ? entries.reduce((a, b) =>
-          (moodScoreMap[a.mood] || 0) > (moodScoreMap[b.mood] || 0) ? a : b
-        ).mood
-      : 'neutral';
-    return { session: sess.name, score, emoji: moodEmojiMap[dominant] || '❓' };
+    // compute average score
+    const avg =
+      entries.length > 0
+        ? entries.reduce((sum, e) => sum + (moodScoreMap[e.mood] || 0), 0) / entries.length
+        : 0;
+    // pick dominant emoji for label
+    const counts: Record<string, number> = {};
+    entries.forEach(e => { counts[e.mood] = (counts[e.mood] || 0) + 1; });
+    const dominantMood = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'neutral';
+    return {
+      session: sess.name,
+      score: parseFloat(avg.toFixed(2)),
+      emoji: moodEmojiMap[dominantMood] || '❓'
+    };
   });
 
   /* Weekly summary */
@@ -209,7 +231,7 @@ export default function Home() {
     const userText = input.trim();
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    /* 1) Detect emotion first */
+    /* 1) Detect emotion */
     let hfLabel = 'neutral';
     try {
       const emoRes = await axios.post('/api/emotion', { text: userText });
@@ -219,26 +241,21 @@ export default function Home() {
     }
     const norm = normalizeEmotion(hfLabel);
 
-    /* 2) Append user message, including mood */
+    /* 2) Append user message with mood */
     const newUserMsgs: Message[] = [
       ...currentMessages,
       { sender: 'user', text: userText, timestamp, mood: norm }
     ];
     setMessages(prev => ({ ...prev, [currentSessionId]: newUserMsgs }));
 
-    /* 3) Apply inverse theme */
+    /* 3) Apply inverse theme and save it */
     const theme = inverseTheme[norm];
     setBg(theme.bg);
     setTextColor(theme.text);
     setTint(theme.tint);
+    setSessionThemes(prev => ({ ...prev, [currentSessionId]: theme }));
 
-    /* 3b) Remember this session’s theme */
-    setSessionThemes(prev => ({
-      ...prev,
-      [currentSessionId]: theme
-    }));
-
-    /* 4) Log mood */
+    /* 4) Log mood entry */
     const today = new Date().toISOString().split('T')[0];
     setMoodLog(log => [
       ...log,
@@ -246,19 +263,22 @@ export default function Home() {
     ]);
 
     /* 5) Build LLM history */
-    const history = newUserMsgs.map(m => {
-      const role: 'user' | 'assistant' = m.sender === 'user' ? 'user' : 'assistant';
-      return { role, content: m.text };
-    });
+    const history: { role: 'user' | 'assistant'; content: string }[] = newUserMsgs.map(m => ({
+      role: m.sender === 'user' ? 'user' : 'assistant',
+      content: m.text
+    }));
 
-    /* 6) Bot reply */
+    /* 6) Get bot reply */
     const reply = await botResponse(history, tone);
     const updatedMsgs: Message[] = [
       ...newUserMsgs,
-      { sender: 'bot', text: reply, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+      {
+        sender: 'bot',
+        text: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }
     ];
     setMessages(prev => ({ ...prev, [currentSessionId]: updatedMsgs }));
-
     setInput('');
   };
 
@@ -274,7 +294,7 @@ export default function Home() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }]
     }));
-    /* initialize new session’s theme & tone to neutral/empathetic */
+    /* init theme & tone */
     setSessionThemes(prev => ({ ...prev, [id]: inverseTheme.neutral }));
     setSessionTones(prev => ({ ...prev, [id]: 'empathetic' }));
     setCurrentSessionId(id);
@@ -295,9 +315,7 @@ export default function Home() {
           <Image src="/logo.png" alt="RantMe Logo" width={36} height={36} className="rounded-md" />
           <h1
             className="text-2xl font-bold"
-            style={{
-              color: textColor !== inverseTheme.neutral.text ? '#ffffff' : '#9C83D3',
-            }}
+            style={{ color: textColor !== inverseTheme.neutral.text ? '#ffffff' : '#9C83D3' }}
           >
             RantMe
           </h1>
@@ -305,21 +323,13 @@ export default function Home() {
         <button
           onClick={createNewSession}
           className="bg-white px-3 py-2 rounded-lg shadow"
-          style={{
-            color: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3',
-          }}
-        >
-          + New Rant
-        </button>
+          style={{ color: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3' }}
+        >+ New Rant</button>
         <button
           onClick={() => setShowStats(s => !s)}
           className="bg-white px-3 py-2 rounded-lg shadow"
-          style={{
-            color: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3',
-          }}
-        >
-          📊 View Stats
-        </button>
+          style={{ color: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3' }}
+        >📊 View Stats</button>
         <h2 className="text-lg font-bold text-white/80">Chat History</h2>
         <ul className="space-y-2 text-sm">
           {sessions.map(sess => (
@@ -330,15 +340,10 @@ export default function Home() {
                   sess.id === currentSessionId ? 'bg-white' : 'hover:bg-white/20'
                 }`}
                 style={{
-                  color:
-                    textColor !== inverseTheme.neutral.text
-                      ? textColor
-                      : '#9C83D3',
-                  fontWeight: sess.id === currentSessionId ? 'bold' : 'normal',
+                  color: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3',
+                  fontWeight: sess.id === currentSessionId ? 'bold' : 'normal'
                 }}
-              >
-                {sess.name}
-              </button>
+              >{sess.name}</button>
             </li>
           ))}
         </ul>
@@ -352,18 +357,14 @@ export default function Home() {
           style={{
             backgroundColor: textColor !== inverseTheme.neutral.text ? tint : '#ffffff',
             borderColor: '#ffffff',
-            color: textColor !== inverseTheme.neutral.text ? textColor : '#000000',
+            color: textColor !== inverseTheme.neutral.text ? textColor : '#000000'
           }}
         >
           <label
             htmlFor="tone"
             className="text-lg font-bold"
-            style={{
-              color: textColor !== inverseTheme.neutral.text ? '#ffffff' : '#000000',
-            }}
-          >
-            Bot Tone:
-          </label>
+            style={{ color: textColor !== inverseTheme.neutral.text ? '#ffffff' : '#000000' }}
+          >Bot Tone:</label>
           <select
             id="tone"
             value={tone}
@@ -373,11 +374,7 @@ export default function Home() {
               setSessionTones(prev => ({ ...prev, [currentSessionId]: t }));
             }}
             className="rounded border px-2 py-1 text-sm"
-            style={{
-              backgroundColor: '#ffffff',
-              color: '#000000',
-              border: `2px solid ${textColor}`,
-            }}
+            style={{ backgroundColor: '#ffffff', color: '#000000', border: `2px solid ${textColor}` }}
           >
             <option value="empathetic">Empathetic</option>
             <option value="motivational">Motivational</option>
@@ -389,11 +386,11 @@ export default function Home() {
         {/* Messages */}
         <div className="flex-1 p-6 overflow-y-auto space-y-4">
           {currentMessages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.sender === 'bot' ? 'justify-start' : 'justify-end'}`}>
+            <div key={i} className={`flex ${msg.sender==='bot'?'justify-start':'justify-end'}`}>
               <div className={`max-w-sm px-4 py-2 rounded-lg shadow ${
-                msg.sender === 'bot'
+                msg.sender==='bot'
                   ? 'bg-white text-gray-800'
-                  : msg.mood && msg.mood !== 'neutral'
+                  : msg.mood && msg.mood!=='neutral'
                     ? 'bg-white text-black'
                     : 'bg-[#9C83D3] text-white'
               }`}>
@@ -407,29 +404,21 @@ export default function Home() {
         {/* Input */}
         <div
           className="border-t-4 border-white p-4 flex gap-2"
-          style={{
-            backgroundColor: textColor !== inverseTheme.neutral.text ? tint : '#ffffff',
-          }}
+          style={{ backgroundColor: textColor !== inverseTheme.neutral.text ? tint : '#ffffff' }}
         >
           <textarea
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), sendMessage())}
+            onKeyDown={e => e.key==='Enter'&&!e.shiftKey&&(e.preventDefault(),sendMessage())}
             placeholder="your rant here..."
             className="flex-1 rounded-xl p-2 text-sm focus:outline-none"
-            style={{
-              backgroundColor: '#ffffff',
-              color: '#000000',
-              border: `2px solid ${textColor}`,
-            }}
+            style={{ backgroundColor:'#ffffff', color:'#000000', border:`2px solid ${textColor}` }}
           />
           <button
             onClick={sendMessage}
             className="px-5 py-2 rounded-xl transition-colors duration-300 text-white"
-            style={{
-              backgroundColor: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3',
-              border: `2px solid ${textColor}`,
-            }}
+            style={{ backgroundColor: textColor!==
+inverseTheme.neutral.text? textColor:'#9C83D3', border:`2px solid ${textColor}` }}
           >
             Send
           </button>
@@ -440,27 +429,23 @@ export default function Home() {
           <div className="border-t bg-white p-4">
             <h3
               className="text-lg font-semibold mb-2"
-              style={{
-                color: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3',
-              }}
-            >
-              📊 Mood Stats by Session
-            </h3>
+              style={{ color: textColor!==inverseTheme.neutral.text? textColor:'#9C83D3' }}
+            >📊 Mood Stats by Session</h3>
             <p className="text-sm text-gray-700 mb-4">
-              Overall Mood This Week: <span className="font-bold">{weeklyMood}</span>
+              Overall Mood: <span className="font-bold">{weeklyMood}</span>
             </p>
             <ResponsiveContainer width="100%" height={320}>
               <LineChart data={cumulativeChartData}>
-                <XAxis dataKey="session" padding={{ left: 20, right: 20 }} />
-                <YAxis domain={[-8, 12]} />
-                <Tooltip formatter={(v: number) => [`${v} pts`, 'Mood Score']} />
+                <XAxis dataKey="session" padding={{ left:20, right:20 }} />
+                <YAxis domain={[-2,2]} />
+                <Tooltip formatter={(v:number)=>([`${v} avg pts`,'Avg Mood'])} />
                 <Line type="monotone" dataKey="score" stroke="#9C83D3" strokeWidth={2} />
                 <Line
                   type="monotone"
                   dataKey="emoji"
                   stroke="#ffde59"
                   strokeWidth={0}
-                  dot={{ r: 8, stroke: '#FF8CD1', strokeWidth: 2, fill: '#fff' }}
+                  dot={{ r:8, stroke:'#FF8CD1', strokeWidth:2, fill:'#fff' }}
                   label={<CustomEmojiLabel />}
                 />
               </LineChart>
