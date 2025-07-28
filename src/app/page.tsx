@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
 import Image from 'next/image';
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
@@ -19,12 +19,18 @@ type Message = {
   sender: 'bot' | 'user';
   text: string;
   timestamp?: string;
-  mood?: string;              // NEW – per‑message mood flag
+  mood?: string;              // per‑message mood flag
 };
 type ChatSessions = { [sessionId: string]: Message[] };
 type Session = { id: string; name: string };
 type ToneType = 'empathetic' | 'motivational' | 'reflective' | 'funny';
 type MoodEntry = { date: string; mood: string; session: string };
+type Task = {
+  id: string;
+  text: string;
+  date: string;               // just the day, no time
+  completed: boolean;
+};
 
 /* ─── Inverse calming themes ────────────────────────────── */
 const inverseTheme: Record<string, { bg: string; text: string; tint: string }> = {
@@ -82,28 +88,14 @@ const inverseTheme: Record<string, { bg: string; text: string; tint: string }> =
 
 /* ─── Maps for chart only ───────────────────────────────── */
 const moodScoreMap: Record<string, number> = {
-  happy: 2,
-  relieved: 1,
-  neutral: 0,
-  sad: -2,
-  anxious: -1,
-  angry: -2,
-  tired: -1,
-  stressed: -1,
-  lonely: -1,
-  depressed: -2
+  happy: 2, relieved: 1, neutral: 0, sad: -2,
+  anxious: -1, angry: -2, tired: -1,
+  stressed: -1, lonely: -1, depressed: -2
 };
 const moodEmojiMap: Record<string, string> = {
-  happy: '😊',
-  relieved: '😌',
-  neutral: '😐',
-  sad: '😢',
-  anxious: '😰',
-  angry: '😠',
-  tired: '😴',
-  stressed: '😫',
-  lonely: '😞',
-  depressed: '💧'
+  happy: '😊', relieved: '😌', neutral: '😐', sad: '😢',
+  anxious: '😰', angry: '😠', tired: '😴',
+  stressed: '😫', lonely: '😞', depressed: '💧'
 };
 
 /* ─── Map HF→our keys ───────────────────────────────────── */
@@ -162,11 +154,17 @@ export default function Home() {
     default: inverseTheme.neutral
   });
 
-  /* ─── NEW: per‑session tone state ───────────────────────── */
+  /* per‑session tone state */
   const [tone, setTone] = useState<ToneType>('empathetic');
   const [sessionTones, setSessionTones] = useState<Record<string, ToneType>>({
     default: 'empathetic'
   });
+
+  /* Checklist state */
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [showChecklist, setShowChecklist] = useState(false);
+  const [newTaskText, setNewTaskText] = useState('');
+  const [newTaskDate, setNewTaskDate] = useState('');
 
   useAnimatedGradient(bg);
 
@@ -190,159 +188,131 @@ export default function Home() {
     setBg(theme.bg);
     setTextColor(theme.text);
     setTint(theme.tint);
-
-    const savedTone = sessionTones[currentSessionId] || 'empathetic';
-    setTone(savedTone);
+    setTone(sessionTones[currentSessionId] || 'empathetic');
   }, [currentSessionId, sessionThemes, sessionTones]);
 
   const currentMessages = messages[currentSessionId] || [];
 
-  /* ─── Chart data: average mood per session ─────────────── */
+  /* Chart data: average mood per session */
   const cumulativeChartData = sessions.map(sess => {
-    // gather all mood entries for this session
     const entries = moodLog.filter(m => m.session === sess.name);
-    // compute average score
-    const avg =
-      entries.length > 0
-        ? entries.reduce((sum, e) => sum + (moodScoreMap[e.mood] || 0), 0) / entries.length
-        : 0;
-    // pick dominant emoji for label
+    const avg = entries.length
+      ? entries.reduce((sum, e) => sum + (moodScoreMap[e.mood] || 0), 0) / entries.length
+      : 0;
     const counts: Record<string, number> = {};
-    entries.forEach(e => { counts[e.mood] = (counts[e.mood] || 0) + 1; });
-    const dominantMood = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'neutral';
-    return {
-      session: sess.name,
-      score: parseFloat(avg.toFixed(2)),
-      emoji: moodEmojiMap[dominantMood] || '❓'
-    };
+    entries.forEach(e => { counts[e.mood] = (counts[e.mood]||0) + 1; });
+    const dominant = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]?.[0] || 'neutral';
+    return { session: sess.name, score: parseFloat(avg.toFixed(2)), emoji: moodEmojiMap[dominant] };
   });
 
   /* Weekly summary */
-  const weeklyScore = moodLog.reduce((s, e) => s + (moodScoreMap[e.mood] || 0), 0);
-  const weeklyMood = weeklyScore > 0
-    ? 'Positive 😊'
-    : weeklyScore < 0
-    ? 'Negative 😞'
-    : 'Neutral 😐';
+  const weeklyScore = moodLog.reduce((s,e) => s + (moodScoreMap[e.mood]||0), 0);
+  let weeklyMood: string;
+  if (weeklyScore>0) weeklyMood='Positive 😊';
+  else if (weeklyScore<0) weeklyMood='Negative 😞';
+  else weeklyMood='Neutral 😐';
 
   /* ── Send message handler ─────────────────────────────── */
   const sendMessage = async () => {
     if (!input.trim()) return;
     const userText = input.trim();
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const timestamp = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
 
     /* 1) Detect emotion */
-    let hfLabel = 'neutral';
+    let hfLabel='neutral';
     try {
-      const emoRes = await axios.post('/api/emotion', { text: userText });
-      hfLabel = emoRes.data.label || 'neutral';
-    } catch {
-      console.error('Emotion API error');
-    }
+      const emoRes = await axios.post('/api/emotion',{ text:userText });
+      hfLabel = emoRes.data.label||'neutral';
+    } catch{ console.error('Emotion API error'); }
     const norm = normalizeEmotion(hfLabel);
 
-    /* 2) Append user message with mood */
+    /* 2) Append user message */
     const newUserMsgs: Message[] = [
       ...currentMessages,
-      { sender: 'user', text: userText, timestamp, mood: norm }
+      { sender:'user', text:userText, timestamp, mood:norm }
     ];
-    setMessages(prev => ({ ...prev, [currentSessionId]: newUserMsgs }));
+    setMessages(p=>({...p,[currentSessionId]:newUserMsgs}));
 
-    /* 3) Apply inverse theme and save it */
+    /* 3) Apply theme & remember */
     const theme = inverseTheme[norm];
-    setBg(theme.bg);
-    setTextColor(theme.text);
-    setTint(theme.tint);
-    setSessionThemes(prev => ({ ...prev, [currentSessionId]: theme }));
+    setBg(theme.bg); setTextColor(theme.text); setTint(theme.tint);
+    setSessionThemes(p=>({...p,[currentSessionId]:theme}));
 
     /* 4) Log mood entry */
     const today = new Date().toISOString().split('T')[0];
-    setMoodLog(log => [
-      ...log,
-      { date: today, mood: norm, session: sessions.find(s => s.id === currentSessionId)!.name }
-    ]);
+    setMoodLog(l=>[...l,{ date:today, mood:norm, session: sessions.find(s=>s.id===currentSessionId)!.name }]);
 
     /* 5) Build LLM history */
     const history: { role: 'user' | 'assistant'; content: string }[] = newUserMsgs.map(m => ({
-      role: m.sender === 'user' ? 'user' : 'assistant',
+      role: (m.sender === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
       content: m.text
     }));
 
-    /* 6) Get bot reply */
-    const reply = await botResponse(history, tone);
+    /* 6) Bot reply */
+    const reply = await botResponse(history,tone);
     const updatedMsgs: Message[] = [
       ...newUserMsgs,
       {
-        sender: 'bot',
-        text: reply,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        sender:'bot',
+        text:reply,
+        timestamp:new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})
       }
     ];
-    setMessages(prev => ({ ...prev, [currentSessionId]: updatedMsgs }));
+    setMessages(p=>({...p,[currentSessionId]:updatedMsgs}));
     setInput('');
   };
 
   /* ── Create new session ───────────────────────────────── */
   const createNewSession = () => {
-    const id = uuidv4(), name = `Day ${sessions.length + 1}`;
-    setSessions(prev => [...prev, { id, name }]);
-    setMessages(prev => ({
-      ...prev,
-      [id]: [{
-        sender: 'bot',
-        text: 'Greetings! How can I help you today?',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }]
-    }));
-    /* init theme & tone */
-    setSessionThemes(prev => ({ ...prev, [id]: inverseTheme.neutral }));
-    setSessionTones(prev => ({ ...prev, [id]: 'empathetic' }));
+    const id=uuidv4(), name=`Day ${sessions.length+1}`;
+    setSessions(p=>[...p,{id,name}]);
+    setMessages(p=>({...p,[id]:[{ sender:'bot', text:'Greetings! How can I help you today?', timestamp:new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) }]}));
+    setSessionThemes(p=>({...p,[id]:inverseTheme.neutral}));
+    setSessionTones(p=>({...p,[id]:'empathetic'}));
     setCurrentSessionId(id);
   };
 
-  /* ─── JSX ─────────────────────────────────────────────── */
+  /* ── Add new task ─────────────────────────────────────── */
+  const addTask = (e:FormEvent) => {
+    e.preventDefault();
+    if (!newTaskText||!newTaskDate) return;
+    setTasks(t=>[...t,{ id:uuidv4(), text:newTaskText, date:newTaskDate, completed:false }]);
+    setNewTaskText(''); setNewTaskDate('');
+  };
+  /* ── Toggle task complete ─────────────────────────────── */
+  const toggleTask = (id:string) => {
+    setTasks(t=>t.map(x=> x.id===id? {...x,completed:!x.completed}:x ));
+  };
+
   return (
-    <div style={{ background: bg, color: textColor }} className="min-h-screen flex transition-colors duration-1000">
+    <div style={{background:bg, color:textColor}} className="min-h-screen flex transition-colors duration-1000">
       {/* Sidebar */}
-      <aside
-        className="w-64 p-6 space-y-4 border-r-4 border-white"
-        style={{
-          backgroundColor: textColor !== inverseTheme.neutral.text ? tint : '#D8CCF1',
-          color: textColor !== inverseTheme.neutral.text ? textColor : '#000000',
-        }}
+      <aside className="w-64 p-6 space-y-4 border-r-4 border-white"
+        style={{ backgroundColor: textColor!==inverseTheme.neutral.text?tint:'#D8CCF1', color: textColor!==inverseTheme.neutral.text?textColor:'#000' }}
       >
         <div className="flex items-center gap-3 mb-6">
-          <Image src="/logo.png" alt="RantMe Logo" width={36} height={36} className="rounded-md" />
-          <h1
-            className="text-2xl font-bold"
-            style={{ color: textColor !== inverseTheme.neutral.text ? '#ffffff' : '#9C83D3' }}
-          >
-            RantMe
-          </h1>
+          <Image src="/logo.png" alt="RantMe Logo" width={36} height={36} className="rounded-md"/>
+          <h1 className="text-2xl font-bold" style={{ color: textColor!==inverseTheme.neutral.text?'#fff':'#9C83D3' }}>RantMe</h1>
         </div>
-        <button
-          onClick={createNewSession}
-          className="bg-white px-3 py-2 rounded-lg shadow"
-          style={{ color: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3' }}
+        <button onClick={createNewSession}
+          className="w-full text-left bg-white px-3 py-2 rounded-lg shadow"
+          style={{ color: textColor!==inverseTheme.neutral.text?textColor:'#9C83D3' }}
         >+ New Rant</button>
-        <button
-          onClick={() => setShowStats(s => !s)}
-          className="bg-white px-3 py-2 rounded-lg shadow"
-          style={{ color: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3' }}
+        <button onClick={()=>{ setShowStats(s=>!s); setShowChecklist(false); }}
+          className="w-full text-left bg-white px-3 py-2 rounded-lg shadow"
+          style={{ color: textColor!==inverseTheme.neutral.text?textColor:'#9C83D3' }}
         >📊 View Stats</button>
+        <button onClick={()=>{ setShowChecklist(c=>!c); setShowStats(false); }}
+          className="w-full text-left bg-white px-3 py-2 rounded-lg shadow"
+          style={{ color: textColor!==inverseTheme.neutral.text?textColor:'#9C83D3' }}
+        >✅ Checklist</button>
         <h2 className="text-lg font-bold text-white/80">Chat History</h2>
         <ul className="space-y-2 text-sm">
-          {sessions.map(sess => (
+          {sessions.map(sess=>(
             <li key={sess.id}>
-              <button
-                onClick={() => setCurrentSessionId(sess.id)}
-                className={`w-full text-left px-3 py-2 rounded-lg ${
-                  sess.id === currentSessionId ? 'bg-white' : 'hover:bg-white/20'
-                }`}
-                style={{
-                  color: textColor !== inverseTheme.neutral.text ? textColor : '#9C83D3',
-                  fontWeight: sess.id === currentSessionId ? 'bold' : 'normal'
-                }}
+              <button onClick={()=>setCurrentSessionId(sess.id)}
+                className={`w-full text-left px-3 py-2 rounded-lg ${sess.id===currentSessionId?'bg-white':'hover:bg-white/20'}`}
+                style={{ color: textColor!==inverseTheme.neutral.text?textColor:'#9C83D3', fontWeight: sess.id===currentSessionId?'bold':'normal' }}
               >{sess.name}</button>
             </li>
           ))}
@@ -352,29 +322,24 @@ export default function Home() {
       {/* Main */}
       <main className="flex-1 flex flex-col">
         {/* Tone selector */}
-        <div
-          className="p-4 flex items-center gap-3 border-b-4"
+        <div className="p-4 flex items-center gap-3 border-b-4"
           style={{
-            backgroundColor: textColor !== inverseTheme.neutral.text ? tint : '#ffffff',
-            borderColor: '#ffffff',
-            color: textColor !== inverseTheme.neutral.text ? textColor : '#000000'
+            backgroundColor: textColor!==inverseTheme.neutral.text?tint:'#fff',
+            borderColor:'#fff',
+            color:textColor!==inverseTheme.neutral.text?textColor:'#000'
           }}
         >
-          <label
-            htmlFor="tone"
-            className="text-lg font-bold"
-            style={{ color: textColor !== inverseTheme.neutral.text ? '#ffffff' : '#000000' }}
+          <label htmlFor="tone" className="text-lg font-bold"
+            style={{ color: textColor!==inverseTheme.neutral.text?'#fff':'#000' }}
           >Bot Tone:</label>
-          <select
-            id="tone"
-            value={tone}
-            onChange={e => {
-              const t = e.target.value as ToneType;
+          <select id="tone" value={tone}
+            onChange={e=>{
+              const t=e.target.value as ToneType;
               setTone(t);
-              setSessionTones(prev => ({ ...prev, [currentSessionId]: t }));
+              setSessionTones(p=>({...p,[currentSessionId]:t}));
             }}
             className="rounded border px-2 py-1 text-sm"
-            style={{ backgroundColor: '#ffffff', color: '#000000', border: `2px solid ${textColor}` }}
+            style={{ backgroundColor:'#fff', color:'#000', border:`2px solid ${textColor}` }}
           >
             <option value="empathetic">Empathetic</option>
             <option value="motivational">Motivational</option>
@@ -383,16 +348,14 @@ export default function Home() {
           </select>
         </div>
 
-        {/* Messages */}
+        {/* Chat */}
         <div className="flex-1 p-6 overflow-y-auto space-y-4">
-          {currentMessages.map((msg, i) => (
+          {currentMessages.map((msg,i)=>(
             <div key={i} className={`flex ${msg.sender==='bot'?'justify-start':'justify-end'}`}>
               <div className={`max-w-sm px-4 py-2 rounded-lg shadow ${
                 msg.sender==='bot'
                   ? 'bg-white text-gray-800'
-                  : msg.mood && msg.mood!=='neutral'
-                    ? 'bg-white text-black'
-                    : 'bg-[#9C83D3] text-white'
+                  : /* always white for any user message */ 'bg-white text-black'
               }`}>
                 <div>{msg.text}</div>
                 <div className="text-xs text-gray-500 mt-1 text-right">{msg.timestamp}</div>
@@ -402,34 +365,28 @@ export default function Home() {
         </div>
 
         {/* Input */}
-        <div
-          className="border-t-4 border-white p-4 flex gap-2"
-          style={{ backgroundColor: textColor !== inverseTheme.neutral.text ? tint : '#ffffff' }}
+        <div className="border-t-4 border-white p-4 flex gap-2"
+          style={{ backgroundColor: textColor!==inverseTheme.neutral.text?tint:'#fff' }}
         >
           <textarea
             value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key==='Enter'&&!e.shiftKey&&(e.preventDefault(),sendMessage())}
+            onChange={e=>setInput(e.target.value)}
+            onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&(e.preventDefault(),sendMessage())}
             placeholder="your rant here..."
             className="flex-1 rounded-xl p-2 text-sm focus:outline-none"
-            style={{ backgroundColor:'#ffffff', color:'#000000', border:`2px solid ${textColor}` }}
+            style={{ backgroundColor:'#fff', color:'#000', border:`2px solid ${textColor}` }}
           />
-          <button
-            onClick={sendMessage}
+          <button onClick={sendMessage}
             className="px-5 py-2 rounded-xl transition-colors duration-300 text-white"
-            style={{ backgroundColor: textColor!==
-inverseTheme.neutral.text? textColor:'#9C83D3', border:`2px solid ${textColor}` }}
-          >
-            Send
-          </button>
+            style={{ backgroundColor: textColor!==inverseTheme.neutral.text?textColor:'#9C83D3', border:`2px solid ${textColor}` }}
+          >Send</button>
         </div>
 
-        {/* Stats */}
+        {/* Stats Panel */}
         {showStats && (
           <div className="border-t bg-white p-4">
-            <h3
-              className="text-lg font-semibold mb-2"
-              style={{ color: textColor!==inverseTheme.neutral.text? textColor:'#9C83D3' }}
+            <h3 className="text-lg font-semibold mb-2"
+              style={{ color: textColor!==inverseTheme.neutral.text?textColor:'#9C83D3' }}
             >📊 Mood Stats by Session</h3>
             <p className="text-sm text-gray-700 mb-4">
               Overall Mood: <span className="font-bold">{weeklyMood}</span>
@@ -439,17 +396,58 @@ inverseTheme.neutral.text? textColor:'#9C83D3', border:`2px solid ${textColor}` 
                 <XAxis dataKey="session" padding={{ left:20, right:20 }} />
                 <YAxis domain={[-2,2]} />
                 <Tooltip formatter={(v:number)=>([`${v} avg pts`,'Avg Mood'])} />
-                <Line type="monotone" dataKey="score" stroke="#9C83D3" strokeWidth={2} />
+                <Line type="monotone" dataKey="score" stroke="#9C83D3" strokeWidth={2}/>
                 <Line
                   type="monotone"
                   dataKey="emoji"
                   stroke="#ffde59"
                   strokeWidth={0}
-                  dot={{ r:8, stroke:'#FF8CD1', strokeWidth:2, fill:'#fff' }}
-                  label={<CustomEmojiLabel />}
+                  dot={{r:8,stroke:'#FF8CD1',strokeWidth:2,fill:'#fff'}}
+                  label={<CustomEmojiLabel/>}
                 />
               </LineChart>
             </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Checklist Panel */}
+        {showChecklist && (
+          <div className="border-t bg-white p-4">
+            <h3 className="text-lg font-semibold mb-2"
+              style={{ color: textColor!==inverseTheme.neutral.text?textColor:'#9C83D3' }}
+            >✅ Checklist</h3>
+            <form onSubmit={addTask} className="flex flex-col gap-2 mb-4">
+              <input
+                type="text"
+                placeholder="Task description"
+                value={newTaskText}
+                onChange={e=>setNewTaskText(e.target.value)}
+                className="border p-2 rounded"
+              />
+              <input
+                type="date"
+                value={newTaskDate}
+                onChange={e=>setNewTaskDate(e.target.value)}
+                className="border p-2 rounded"
+              />
+              <button type="submit"
+                className="self-start px-4 py-2 rounded transition-colors duration-300 text-white"
+                style={{
+                  backgroundColor: textColor!==inverseTheme.neutral.text?textColor:'#9C83D3',
+                  border: `2px solid ${textColor}`
+                }}
+              >Add Task</button>
+            </form>
+            <ul className="space-y-2">
+              {tasks.map(t => (
+                <li key={t.id} className="flex items-center gap-2">
+                  <input type="checkbox" checked={t.completed} onChange={() => toggleTask(t.id)} />
+                  <span className={t.completed ? "line-through text-gray-500" : ""}>
+                    {t.text} <small className="text-gray-400">({new Date(t.date).toLocaleDateString()})</small>
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </main>
