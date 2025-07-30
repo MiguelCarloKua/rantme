@@ -2,7 +2,17 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
+First, run the following in your terminal to install all required dependencies:
+
+```bash
+npm install axios uuid recharts
+```
+then 
+```bash
+npm install
+```
+
+then run the development server:
 
 ```bash
 npm run dev
