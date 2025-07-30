@@ -29,10 +29,10 @@ Emotion-Aware Chatbot
 Chat with an AI assistant that adjusts its tone based on your emotion (empathetic, motivational, reflective, or funny).
 
 Real-Time Emotion Detection
-Each message is analyzed using a transformer model to detect emotion (e.g., sadness, joy, anger), and the chatbot adjusts its response accordingly.
+Each message is analyzed using a transformer model to detect emotion, and the chatbot adjusts its response accordingly.
 
 Mood-Adaptive Backgrounds
-The background gradient dynamically changes to match your emotional state — calming green for sadness, vibrant teal for joy, etc.
+The background gradient dynamically changes to match your emotional state.
 
 Mood Tracking Analytics
 Visualize your emotional history using an interactive mood graph, with emojis that reflect your dominant emotion per day.
@@ -45,7 +45,7 @@ Rant across multiple sessions. Each session is logged and can be revisited from 
 
 ## How to Use It
 Start Chatting
-Type your thoughts or feelings in the chat input and hit Send. The AI will respond with a tone that you selected from the dropdown (e.g., empathetic).
+Type your thoughts or feelings in the chat input and hit Send. The AI will respond with a tone that you selected from the dropdown.
 
 View Mood Stats
 Click on View Stats in the sidebar to see how your mood changes across sessions. The system computes your mood score and shows a weekly summary.
@@ -54,5 +54,5 @@ Use the Checklist
 Click on Checklist to add your academic or personal tasks. Set a due date and mark them complete when done.
 
 Switch Between Sessions
-Use the chat history panel (Day 1, Day 2...) to jump between chat sessions. Each day is stored with its own mood logs and messages.
+Use the chat history panel to jump between chat sessions. Each day is stored with its own mood logs and messages.
 
